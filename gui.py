@@ -12,7 +12,17 @@ import serial
 import os
 import webbrowser
 import math  
+import csv
 
+current_directory = os.getcwd()
+ofiles_directory = os.path.join(current_directory, r'output_files')
+if not os.path.exists(ofiles_directory):
+    os.makedirs(ofiles_directory)
+session_directory = ""
+
+writer = None
+telemetry_values= ["Time","DHT Temp","BME Temp","R.H","Pressure","Altitude","Voltage","Current"]
+gps_values = ["Time","Latitude","Longitude","Satellites"]
 
 b = 0.0000225577
 k = 5.2559
@@ -30,6 +40,11 @@ packets    = 0
 packets_errors    = 0
 sea_altitude = 0.0
 altitude = 0.0
+gps_coors = 0
+
+gps_start = None
+gps_end   = None
+
 #LINK
 LINK_LAT = None
 LINK_LONG = None
@@ -141,7 +156,11 @@ def connect():
 
     global serial_object
     global t_up
+    global session_directory
+    global writer
     global q
+    global gps_coors
+    global packets
     version_ = button_var.get()
     port = port_entry.get()
     baud = baud_entry.get()
@@ -150,11 +169,28 @@ def connect():
         if version_ == 2:
             try:
                 serial_object = serial.Serial('/dev/tty' + str(port), baudrate =baud, timeout = 1)
+                session_directory = ofiles_directory + strftime("/%Y-%m-%d_%H%M%S")
+                os.makedirs(session_directory)
             
             except:
+                
+                q = 1
+                gps_coors = 0
+                packets = 0
                 print ("Cant Open Specified Port")
+                
         elif version_ == 1:
             serial_object = serial.Serial( str(port), baudrate= baud, timeout = 1)
+            session_directory = ofiles_directory + strftime("/%Y-%m-%d_%H%M%S")
+            os.makedirs(session_directory)
+
+            with open(session_directory + "/Telemetry.csv",'w',newline='') as file:
+                writer = csv.writer(file,delimiter = ',')
+                writer.writerow(telemetry_values)
+
+            with open(session_directory + "/GPS.csv",'w',newline='') as file:
+                writer = csv.writer(file,delimiter = ',')
+                writer.writerow(gps_values)    
         elif version_ == 0:
             print ("seleccione SO")
 
@@ -180,7 +216,7 @@ def get_data():
     global sat_stream2
     global update_period
     global packets
-    
+    global writer
     e = 0
     new = time.time()
     while e !=1:   
@@ -248,6 +284,9 @@ def update_gui():
     global LINK_LONG
     global packets
     global packets_errors
+    global writer
+    global gps_coors
+    global gps_start
     while(1):
 
         if sat_stream1 != None:
@@ -276,7 +315,22 @@ def update_gui():
                     LINK_LONG = str(LONG)
                     GPS_Satellites.set(sat_stream1[5])
                     
-                
+                try:
+                    if(sat_stream1[3] != ""):
+                        gps_coors = gps_coors + 1
+                        if(gps_coors == 1):
+                            make_earth_file()
+                            gps_start = strftime("%y/%m/%d at %H:%M:%S")
+                        if (gps_coors >= 1):
+                            efile = open(session_directory + '/Trajectory.kml','a')
+                            efile.write(LINK_LONG+","+LINK_LAT+"\n")
+                            efile.close()
+                        gps_data = [strftime("%H:%M:%S"),LAT,LONG,sat_stream1[5]]
+                        with open(session_directory + "/GPS.csv",'a',newline='') as file:
+                            writer = csv.writer(file,delimiter = ',')
+                            writer.writerow(gps_data)
+                except:
+                    pass    
             except:
                 print("stream1 Err")
             sat_stream1 = None
@@ -327,18 +381,74 @@ def update_gui():
             try:
                 data_r.set(packets)
                 data_err.set(packets_errors)
+                Telemetry_data = [strftime("%H:%M:%S"),sat_stream2[0],sat_stream2[2],sat_stream2[1],sat_stream2[3],sea_altitude,sat_stream2[5],sat_stream2[6]]
+                with open(session_directory + "/Telemetry.csv",'a',newline='') as file:
+                    writer = csv.writer(file,delimiter = ',')
+                    writer.writerow(Telemetry_data)
             except:
                 pass
             sat_stream2 = None   
             
         time.sleep(.1)
 
+def make_earth_file():
+    """make a google earth file"""
+    global session_directory
+
+    efile = open(session_directory + '/Trajectory.kml','w')
+    efile.write(
+      
+"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"> <Document>
+<name>Trajectory</name>
+<description>CANSAT Trajectory</description> <Style id="yellowLineGreenPoly">
+<LineStyle>
+<color>7f00ffff</color>
+<width>4</width>
+</LineStyle>
+<PolyStyle>
+<color>7f00ff00</color>
+</PolyStyle>
+</Style> <Placemark>
+<styleUrl>#yellowLineGreenPoly</styleUrl>
+<LineString>
+<extrude>1</extrude>
+<tessellate>1</tessellate>
+<altitudeMode>absoluto</altitudeMode>
+
+<coordinates>
 
 
+""")
+    efile.close()
+
+def close_earth_file():
+    global session_directory
+    global gps_start
+    efile = open(session_directory + '/Trajectory.kml','a')
+    efile.write("""
+</coordinates>
+</LineString> 
+<name>CANSAT Trajectory</name>
+<description>\n""")
+    efile.write("<b>Start: </b>"+gps_start+"<br/>\n")
+    efile.write("<b>End:</b> "+strftime("%y/%m/%d at %H:%M:%S")+"\n")
+    efile.write("""
+
+</description>
+</Placemark>
+ </Document> </kml>  
+    """)
+    efile.close()
 
 def disconnect():
     global q
+    global gps_coors
+    global packets
     q = 1
+    gps_coors = 0
+    packets = 0
+    close_earth_file()
     conn_var.set("")
     disconn_var.set("DISCONNECTED")
     try:
