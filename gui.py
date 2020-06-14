@@ -1,3 +1,4 @@
+
 import time
 from time import strftime
 from datetime import date,datetime
@@ -15,17 +16,18 @@ import math
 
 b = 0.0000225577
 k = 5.2559
-
+q=0
 serial_data     = ''
 raw_serial = None
 filter_data = None
 sat_stream1 = None
 sat_stream2 = None
-update_period = 3
+update_period = 2
 serial_object = None
 power = None
 batt_percent = None
-packages    = 0
+packets    = 0
+packets_errors    = 0
 sea_altitude = 0.0
 altitude = 0.0
 #LINK
@@ -40,18 +42,20 @@ BATTERY_MAX = 4.1
 
 #COLORS
 color_gui_bg   = "#918D9E" 
-color_frame_bg = "#918D9E"
-color_terminal_bg   = "#11110F"
+color_frame_bg = "#262A33"
+color_terminal_bg   = "#262A33"
 color_terminal_text = "#44F24F"
 color_label_txt     = "#0D0D0D"
 
-color_button_bg   = "#2F5956"
+color_button_bg   = "#56545E"
 color_button_txt  = "#E7E8E9"
 color_reportbtn_bg  = "#038C73"
 color_mapsbtn_bg    = "#D94141"
-color_entry_bg    = "#AB9FAB"
+color_entry_bg    = "#9C98AB"
 
-color_probar_tg = "#B3A7B3"
+color_border = "#797685"
+color_probar_tg = "#9C98AB"
+color_border2 = "#56545E"
 color_batt_bar  = "#18A367"
 color_temp_bar  = "#D0363E"
 color_rh_bar    = "#4999AB"
@@ -71,16 +75,18 @@ font_boldunder = tkFont.Font(family="Alte Haas Grotesk" ,size=9,weight ="bold",u
 font_data_1 = tkFont.Font(family="Alte Haas Grotesk" ,size=10)
 font_terminal_txt = tkFont.Font(family="Envy Code R" ,size=11)
 font_con_stat = tkFont.Font(family="Alte Haas Grotesk" ,size=11,weight ="bold")
+font_con_stat1 = tkFont.Font(family="Alte Haas Grotesk" ,size=13,weight ="bold")
 font_var_bold = tkFont.Font(family="Alte Haas Grotesk" ,size=11,weight ="bold")
 
 #STYLES
 ProgressBar_style = ttk.Style()
-ProgressBar_style.configure("battery.Horizontal.TProgressbar", troughcolor=color_probar_tg, background = color_batt_bar)
-ProgressBar_style.configure("temperature.Horizontal.TProgressbar", troughcolor=color_probar_tg, background=color_temp_bar)
-ProgressBar_style.configure("rh.Horizontal.TProgressbar", troughcolor=color_probar_tg, background=color_rh_bar)
-ProgressBar_style.configure("press.Horizontal.TProgressbar", troughcolor=color_probar_tg, background=color_pess_bar)
-ProgressBar_style.configure("salt.Vertical.TProgressbar", troughcolor=color_probar_tg, background=color_salt_bar)
-ProgressBar_style.configure("alt.Vertical.TProgressbar", troughcolor=color_probar_tg, background=color_alt_bar)
+ProgressBar_style.theme_use('clam')
+ProgressBar_style.configure("battery.Horizontal.TProgressbar", troughcolor=color_probar_tg, background = color_batt_bar,bordercolor=color_border, lightcolor=color_border2, darkcolor=color_border2)
+ProgressBar_style.configure("temperature.Horizontal.TProgressbar", troughcolor=color_probar_tg, background=color_temp_bar,bordercolor=color_border, lightcolor=color_border2, darkcolor=color_border2)
+ProgressBar_style.configure("rh.Horizontal.TProgressbar", troughcolor=color_probar_tg, background=color_rh_bar,bordercolor=color_border, lightcolor=color_border2, darkcolor=color_border2)
+ProgressBar_style.configure("press.Horizontal.TProgressbar", troughcolor=color_probar_tg, background=color_pess_bar,bordercolor=color_border, lightcolor=color_border2, darkcolor=color_border2)
+ProgressBar_style.configure("salt.Vertical.TProgressbar", troughcolor=color_probar_tg, background=color_salt_bar,bordercolor=color_border, lightcolor=color_border2, darkcolor=color_border2)
+ProgressBar_style.configure("alt.Vertical.TProgressbar", troughcolor=color_probar_tg, background=color_alt_bar,bordercolor=color_border, lightcolor=color_border2, darkcolor=color_border2)
 
 #VAR TEXT
 conn_var    = StringVar()
@@ -105,14 +111,37 @@ Batt_Curr   = StringVar()
 Batt_Power  = StringVar()
 Batt_Perc   = StringVar()
 
+data_r   = StringVar()
+data_err   = StringVar()
+
+tv_uptime = StringVar()
+tv_uptime.set("00 : 00 : 00")
+
+def cron():
+    global q
+    
+    for h in range (0,24):
+        if (q==1 ):
+            break
+        for m in range(0,60):
+            if (q==1 ):
+                break
+            for s in range (0,60):
+                if (q==1 ):
+                    break
+                tv_uptime.set("{:02d} : {:02d} : {:02d}".format(h,m,s)) 
+                time.sleep(1)
+
+
+
 def connect():
     """Esta funcion inicia la conexion al dispositivo UART
     El puerto y el Baudrate son definidos por el usuario
     Es posible elegir la plataforma para trabajar LINUX O WINDOWS"""
 
     global serial_object
-
-
+    global t_up
+    global q
     version_ = button_var.get()
     port = port_entry.get()
     baud = baud_entry.get()
@@ -132,11 +161,13 @@ def connect():
     except ValueError:
         print ("Enter Baud and Port")
         return
-
+    q=0
     t1 = threading.Thread(target = get_data)
     t1.daemon = True
     t1.start()
-
+    t_up = threading.Thread(target= cron)
+    #t_up.daemon = True
+    t_up.start()
 
 def get_data():
     """Esta función sirve para recopilar datos del serial object y almacenar 
@@ -148,6 +179,7 @@ def get_data():
     global sat_stream1
     global sat_stream2
     global update_period
+    global packets
     
     e = 0
     new = time.time()
@@ -178,11 +210,13 @@ def get_data():
                 if filter_data.startswith("#CAN"):
                     sat_stream1 = filter_data.replace("#CAN,","").split(",")
                     print(sat_stream1)
-                                 
+                           
                 if filter_data.startswith("#SAT"):
                     sat_stream2 = filter_data.replace("#SAT,","").split(",")
                     print(sat_stream2)
-                                                                
+                
+                
+                                                        
             else:
                 pass
         
@@ -190,7 +224,7 @@ def get_data():
         except TypeError:
             e=1
         except ValueError:
-            print("ERROR")
+            print("ERROR EN EL PUERTO")
 
         except AttributeError:
             conn_var.set("")
@@ -204,6 +238,7 @@ def get_data():
             messagebox.showinfo('Port','Port Closed')
             e=1
 
+        
 
 def update_gui():
 
@@ -211,10 +246,18 @@ def update_gui():
     global sat_stream2
     global LINK_LAT
     global LINK_LONG
-    global packages
-
+    global packets
+    global packets_errors
     while(1):
+
         if sat_stream1 != None:
+            try:
+                if(len(sat_stream1) == 6):
+                    packets = packets + 1
+                else:
+                    packets_errors = packets_errors + 1
+            except:
+                pass
             try:
                 if(sat_stream1[0] != ""):
                     GPS_DataTime.set(strftime("%d/%m/%y")+"  |  "+sat_stream1[0]+":"+sat_stream1[1]+":"+sat_stream1[2])
@@ -239,6 +282,13 @@ def update_gui():
             sat_stream1 = None
             
         if sat_stream2 != None:
+            try:
+                if(len(sat_stream2) == 7):
+                    packets = packets + 1
+                else:
+                    packets_errors = packets_errors + 1
+            except:
+                pass
             try:
                 Tel_Temp1.set(sat_stream2[0])
                 Tel_RH.set(sat_stream2[1])
@@ -274,14 +324,21 @@ def update_gui():
                 alt_bar["value"] = altitude
             except:
                 print("PBars Err")
+            try:
+                data_r.set(packets)
+                data_err.set(packets_errors)
+            except:
+                pass
             sat_stream2 = None   
-        
-        time.sleep(.001)
+            
+        time.sleep(.1)
 
 
 
 
 def disconnect():
+    global q
+    q = 1
     conn_var.set("")
     disconn_var.set("DISCONNECTED")
     try:
@@ -316,16 +373,16 @@ if __name__ == "__main__":
     telemetry_frame = Frame(height = 245, width = 505, bd = 2, relief = 'groove',bg = color_gui_bg)
     telemetry_frame.place(x = 7, y = 155)
 
-    telemetry1_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_frame_bg)
+    telemetry1_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_gui_bg)
     telemetry1_frame.place(x = 20, y = 180)
-    telemetry2_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_frame_bg)
+    telemetry2_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_gui_bg)
     telemetry2_frame.place(x = 165, y = 180)
-    telemetry3_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_frame_bg)
+    telemetry3_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_gui_bg)
     telemetry3_frame.place(x = 20, y = 285)
-    telemetry4_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_frame_bg)
+    telemetry4_frame = Frame(height = 105, width = 145, bd = 1, relief = 'groove',bg = color_gui_bg)
     telemetry4_frame.place(x = 165, y = 285)
     
-    telemetry2_frame = Frame(height = 210, width = 180, bd = 1, relief = 'groove',bg = color_frame_bg)
+    telemetry2_frame = Frame(height = 210, width = 180, bd = 1, relief = 'groove',bg = color_gui_bg)
     telemetry2_frame.place(x = 320, y = 180)
 
     gps_frame_frame = Frame(height = 245, width = 270, bd = 2, relief = 'groove',bg = color_gui_bg)
@@ -337,12 +394,17 @@ if __name__ == "__main__":
     ofiles_frame      = Frame(height = 120, width = 270, bd = 2, relief = 'groove',bg = color_gui_bg)
     ofiles_frame.place(x = 515, y = 405)
 
-    status_frame    = Frame(height = 55, width = 778, bd = 2, relief = 'groove',bg = color_gui_bg)
+    status_frame    = Frame(height = 65, width = 778, bd = 2, relief = 'groove',bg = color_gui_bg)
     status_frame.place(x = 7, y = 530)
 
+    con_frame    = Frame(height = 32, width = 140, bd = 0, relief = 'groove',bg = color_frame_bg)
+    con_frame.place(x = 16, y = 553)
+
+    #logo = PhotoImage(file = "logo.png")
+    #log = Label(GUI,image = logo).place(x=560,y=533)
     ######TERMINAL
     data_flow = Text(width = 59, height = 6,bg=color_terminal_bg,fg =color_terminal_text,font = font_terminal_txt)
-    data_flow.place(x = 20, y = 26)
+    data_flow.place(x = 20, y = 28)
 
     t2 = threading.Thread(target = update_gui)
     t2.daemon = True
@@ -364,16 +426,16 @@ if __name__ == "__main__":
     Label(text = "Power:",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 530, y =70)
     Label(text = "Remaining Percent:",bg = color_gui_bg,fg = color_label_txt,font = ("Alte Haas Grotesk" ,8)).place(x = 570, y =100)
     #TELEMETRY LAB
-    Label(text = "DH22 | Temperature",font = font_data_1,bg = color_frame_bg,fg = color_label_txt).place(x = 92, y= 195,anchor= "center")
-    Label(text = "°C" ,font = ("DS-Digital",15),bg = color_frame_bg,fg = color_label_txt).place(x = 135, y= 225,anchor= "center")
-    Label(text = "BME | Temperature",font = font_data_1,bg = color_frame_bg,fg = color_label_txt).place(x = 237, y= 195,anchor= "center")
-    Label(text = "°C" ,font = ("DS-Digital",15),bg = color_frame_bg,fg = color_label_txt).place(x = 280, y= 225,anchor= "center")
-    Label(text = "R. Humidity",font = font_data_1,bg = color_frame_bg,fg = color_label_txt).place(x = 92, y= 300,anchor= "center")
-    Label(text = "%" ,font = ("DS-Digital",18),bg = color_frame_bg,fg = color_label_txt).place(x = 135, y= 330,anchor= "center")
-    Label(text = "Pressure:",font = font_data_1,bg = color_frame_bg,fg = color_label_txt).place(x = 237, y= 300,anchor= "center")
-    Label(text = "hp" ,font = ("DJB Get Digital" ,13),bg = color_frame_bg,fg = color_label_txt).place(x = 290, y= 330,anchor= "center")
-    Label(text = "A. Altitude:",font = font_data_1,bg = color_frame_bg,fg = color_label_txt).place(x = 370, y= 350,anchor= "center")
-    Label(text = "Altitude:",font = font_data_1,bg = color_frame_bg,fg = color_label_txt).place(x = 450, y= 350,anchor= "center")
+    Label(text = "DH22 | Temperature",font = font_data_1,bg = color_gui_bg,fg = color_label_txt).place(x = 92, y= 195,anchor= "center")
+    Label(text = "°C" ,font = ("DS-Digital",15),bg = color_gui_bg,fg = color_label_txt).place(x = 135, y= 225,anchor= "center")
+    Label(text = "BME | Temperature",font = font_data_1,bg = color_gui_bg,fg = color_label_txt).place(x = 237, y= 195,anchor= "center")
+    Label(text = "°C" ,font = ("DS-Digital",15),bg = color_gui_bg,fg = color_label_txt).place(x = 280, y= 225,anchor= "center")
+    Label(text = "R. Humidity",font = font_data_1,bg = color_gui_bg,fg = color_label_txt).place(x = 92, y= 300,anchor= "center")
+    Label(text = "%" ,font = ("DS-Digital",18),bg = color_gui_bg,fg = color_label_txt).place(x = 135, y= 330,anchor= "center")
+    Label(text = "Pressure:",font = font_data_1,bg = color_gui_bg,fg = color_label_txt).place(x = 237, y= 300,anchor= "center")
+    Label(text = "hp" ,font = ("DJB Get Digital" ,13),bg = color_gui_bg,fg = color_label_txt).place(x = 290, y= 330,anchor= "center")
+    Label(text = "A. Altitude:",font = font_data_1,bg = color_gui_bg,fg = color_label_txt).place(x = 370, y= 350,anchor= "center")
+    Label(text = "Altitude:",font = font_data_1,bg = color_gui_bg,fg = color_label_txt).place(x = 450, y= 350,anchor= "center")
     #GPS DATA LAB
     Label(text = "Date/Time",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 650, y =180, anchor= "center")
     Label(text = "Satellites",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 650, y =230, anchor= "center")
@@ -383,10 +445,14 @@ if __name__ == "__main__":
     #CONECTION LAB
     Label(text = "Baud:",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 90, y = 466)
     Label(text = "Port:",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 20, y = 466)
+    #STATISTICS LAB
+    Label(text = "Packets:",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 530, y =438)
+    Label(text = "Errors:",bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 670, y =438)
     #STATUS LAB
-    Label(textvariable = disconn_var,bg = color_gui_bg,fg = "#F20F0F",font = font_con_stat).place(x = 21, y =555)
-    Label(textvariable = conn_var,bg = color_gui_bg,fg = "#13F235",font = font_con_stat).place(x = 20, y =555)
-    
+    Label(textvariable = disconn_var,bg = color_frame_bg,fg = color_temp_bar,font = font_con_stat).place(x = 22, y =558)
+    Label(textvariable = conn_var,bg = color_frame_bg,fg = color_terminal_text,font = font_con_stat1).place(x = 20, y =557)
+    Label(text = "Uptime: ",bg = color_gui_bg,fg = color_frame_bg,font = font_con_stat1).place(x = 200, y =555)
+
     ######VARIABLE LABEL
     #BATTERY
     Label(textvariable = Batt_Volt,font = font_var_bold,bg = color_gui_bg,fg = color_label_txt).place(x = 585, y= 40)
@@ -394,24 +460,25 @@ if __name__ == "__main__":
     Label(textvariable = Batt_Power,font = font_var_bold,bg = color_gui_bg,fg = color_label_txt).place(x = 580, y= 70)
     Label(textvariable = Batt_Perc,font = font_var_bold,bg = color_gui_bg,fg = color_label_txt).place(x = 675, y= 95)
     #TELEMETRY 
-    Label(textvariable = Tel_Temp1,font = "DS-Digital 24 bold",bg = color_frame_bg,fg = color_label_txt).place(x = 60, y= 210)
-    Label(textvariable = Tel_Temp2,font = "DS-Digital 24 bold",bg = color_frame_bg,fg = color_label_txt).place(x = 190, y= 210)
-    Label(textvariable = Tel_RH,font = "DS-Digital 24 bold",bg = color_frame_bg,fg = color_label_txt).place(x = 92, y= 330,anchor= "center")
-    Label(textvariable = Tel_Press,font = "DS-Digital 20 bold",bg = color_frame_bg,fg = color_label_txt).place(x = 237, y= 330,anchor= "center")
-    Label(textvariable = Tel_SAlt,font = ("DJB Get Digital",15),bg = color_frame_bg,fg = color_label_txt).place(x = 370, y= 370,anchor= "center")
-    Label(textvariable = Tel_Alt,font = ("DJB Get Digital",15),bg = color_frame_bg,fg = color_label_txt).place(x = 450, y= 370,anchor= "center")
-
+    Label(textvariable = Tel_Temp1,font = "DS-Digital 24 bold",bg = color_gui_bg,fg = color_label_txt).place(x = 60, y= 210)
+    Label(textvariable = Tel_Temp2,font = "DS-Digital 24 bold",bg = color_gui_bg,fg = color_label_txt).place(x = 190, y= 210)
+    Label(textvariable = Tel_RH,font = "DS-Digital 24 bold",bg = color_gui_bg,fg = color_label_txt).place(x = 92, y= 330,anchor= "center")
+    Label(textvariable = Tel_Press,font = "DS-Digital 20 bold",bg = color_gui_bg,fg = color_label_txt).place(x = 237, y= 330,anchor= "center")
+    Label(textvariable = Tel_SAlt,font = ("DJB Get Digital",15),bg = color_gui_bg,fg = color_label_txt).place(x = 370, y= 370,anchor= "center")
+    Label(textvariable = Tel_Alt,font = ("DJB Get Digital",15),bg = color_gui_bg,fg = color_label_txt).place(x = 450, y= 370,anchor= "center")
     #GPS DATA
     Label(textvariable = GPS_DataTime,bg = color_gui_bg,fg = color_label_txt,font = font_var_bold).place(x = 650, y =200, anchor= "center")
     Label(textvariable = GPS_Satellites,bg = color_gui_bg,fg = color_label_txt,font = font_var_bold).place(x = 650, y =250, anchor= "center")
     Label(textvariable = GPS_Lat,bg = color_gui_bg,fg = color_label_txt,font = font_var_bold).place(x = 650, y =300)
     Label(textvariable = GPS_Lon,bg = color_gui_bg,fg = color_label_txt,font = font_var_bold).place(x = 645, y =320)
-
-
-
+    #STATISTICS 
+    Label(textvariable = data_r,font = font_var_bold,bg = color_gui_bg,fg = color_label_txt).place(x = 590, y= 438)
+    Label(textvariable = data_err,font = font_var_bold,bg = color_gui_bg,fg = color_label_txt).place(x = 720, y= 438)
+    #SATATUS
+    Label(textvariable = tv_uptime,bg = color_gui_bg,fg = color_frame_bg,font = ("DJB Get Digital",20)).place(x = 280, y =550)
 
     ######ENTRY
-    send_data_entry = Entry(width = 7,bg = color_entry_bg, fg = color_terminal_bg)
+    send_data_entry = Entry(width = 8,bg = color_entry_bg, fg = color_terminal_bg)
     send_data_entry.place(x = 360, y = 485)
     
     baud_entry = Entry(width = 6, bg = color_entry_bg, fg = color_terminal_bg,font = font_data_1)
@@ -428,9 +495,9 @@ if __name__ == "__main__":
     Radiobutton(text = "Linux",width=7, variable = button_var, value = 2,bg = color_gui_bg,fg = color_label_txt,font = font_data_1).place(x = 120, y = 435)
 
     ######BUTTONS
-    Button(text = "Send",font = ("Alte Haas Grotesk",8), command = send, width = 6,bg=color_button_bg,fg = color_button_txt).place(x = 430, y = 483)
-    Button(text = "Connect",font = ("Alte Haas Grotesk",8),command = connect,width= 9,bg=color_button_bg,fg = color_button_txt).place(x = 150, y = 483)
-    Button(text = "Disconnect",font = ("Alte Haas Grotesk",8), command = disconnect,width= 9,bg=color_button_bg,fg = color_button_txt).place(x =250, y = 483)
+    Button(text = "Send",font = ("Alte Haas Grotesk",8), command = send, width = 10,bg=color_button_bg,fg = color_button_txt).place(x = 430, y = 483)
+    Button(text = "Connect",font = ("Alte Haas Grotesk",8),command = connect,width= 12,bg=color_button_bg,fg = color_button_txt).place(x = 150, y = 483)
+    Button(text = "Disconnect",font = ("Alte Haas Grotesk",8), command = disconnect,width= 12,bg=color_button_bg,fg = color_button_txt).place(x =250, y = 483)
     Button(text = "Google Maps", command = gmaps, width =15 ,bg=color_mapsbtn_bg,fg = color_button_txt,font = ("Alte Haas Grotesk",12)).place(x = 650, y = 370,anchor = "center")
 
 
